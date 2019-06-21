@@ -471,34 +471,37 @@
                          (when arglist
                            (message "~A" (ppcre:regex-replace-all "\\s+" arglist " "))))))))
 
+(defvar *cached-autodoc-context* nil)
+
 (let (autodoc-symbol)
   (defun autodoc (function)
     (let ((context (lem-lisp-syntax:parse-for-swank-autodoc (current-point))))
+      (setf *cached-autodoc-context* context)
       (unless autodoc-symbol
         (setf autodoc-symbol (intern "AUTODOC" :swank)))
       (lisp-eval-async
        `(,autodoc-symbol ',context)
        (lambda (doc)
          (ignore-errors
-          (destructuring-bind (doc cache-p) doc
-            (declare (ignore cache-p))
-            (unless (eq doc :not-available)
-              (let* ((buffer (make-buffer "*swank:autodoc-fontity*"
-                                          :temporary t :enable-undo-p nil))
-                     (point (buffer-point buffer)))
-                (erase-buffer buffer)
-                (change-buffer-mode buffer 'lisp-mode)
-                (insert-string point (ppcre:regex-replace-all "\\s*\\n\\s*" doc " "))
-                (buffer-start point)
-                (multiple-value-bind (result string)
-                    (search-forward-regexp point "(?====> (.*) <===)")
-                  (when result
-                    (with-point ((start point))
-                      (character-offset point 5)
-                      (search-forward point "<===")
-                      (delete-between-points start point)
-                      (insert-string point string :attribute 'region))))
-                (funcall function buffer))))))))))
+           (destructuring-bind (doc cache-p) doc
+             (declare (ignore cache-p))
+             (unless (eq doc :not-available)
+               (let* ((buffer (make-buffer "*swank:autodoc-fontity*"
+                                           :temporary t :enable-undo-p nil))
+                      (point (buffer-point buffer)))
+                 (erase-buffer buffer)
+                 (change-buffer-mode buffer 'lisp-mode)
+                 (insert-string point (ppcre:regex-replace-all "\\s*\\n\\s*" doc " "))
+                 (buffer-start point)
+                 (multiple-value-bind (result string)
+                     (search-forward-regexp point "(?====> (.*) <===)")
+                   (when result
+                     (with-point ((start point))
+                       (character-offset point 5)
+                       (search-forward point "<===")
+                       (delete-between-points start point)
+                       (insert-string point string :attribute 'region))))
+                 (funcall function buffer))))))))))
 
 (define-command lisp-autodoc-with-typeout () ()
   (autodoc (lambda (temp-buffer)
@@ -671,6 +674,7 @@
   (eval-with-transcript `(ql:quickload ,(string system-name))))
 
 (defvar *completion-symbol-with-fuzzy* t)
+(defvar *completion-keyword-with-autodoc* t)
 
 (defun symbol-completion (str &optional (package (current-package)))
   (let* ((fuzzy *completion-symbol-with-fuzzy*)
@@ -748,22 +752,33 @@
     (skip-chars-forward end #'syntax-symbol-char-p)
     (when (point< start end)
       (let* ((fuzzy *completion-symbol-with-fuzzy*)
+             (keys
+               (and *completion-keyword-with-autodoc*
+                    (eql (character-at start) #\:)
+                    *cached-autodoc-context*
+                    (car (lisp-eval-from-string
+                          (format nil "(~A ~S '~S)"
+                                  "swank:completions-for-keyword"
+                                  (points-to-string start end)
+                                  *cached-autodoc-context*)))))
              (result
-               (lisp-eval-from-string (format nil "(~A ~S ~S)"
-                                              (if fuzzy
-                                                  "swank:fuzzy-completions"
-                                                  "swank:completions")
-                                              (points-to-string start end)
-                                              (current-package)))))
+               (if keys
+                   (list keys nil)
+                   (lisp-eval-from-string (format nil "(~A ~S ~S)"
+                                                  (if fuzzy
+                                                      "swank:fuzzy-completions"
+                                                      "swank:completions")
+                                                  (points-to-string start end)
+                                                  (current-package))))))
         (when result
           (destructuring-bind (completions timeout-p) result
             (declare (ignore timeout-p))
             (mapcar (lambda (completion)
                       (make-completion-item
-                       :label (if fuzzy
+                       :label (if (and fuzzy (not keys))
                                   (first completion)
                                   completion)
-                       :detail (if fuzzy
+                       :detail (if (and fuzzy (not keys))
                                    (fourth completion)
                                    "")
                        :start start

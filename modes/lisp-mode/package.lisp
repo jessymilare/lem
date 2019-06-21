@@ -53,6 +53,8 @@
    :lisp-compile-defun
    :lisp-macroexpand
    :lisp-macroexpand-all
+   :*completion-keyword-with-autodoc*
+   :*completion-symbol-with-fuzzy*
    :prompt-for-symbol-name
    :show-description
    :lisp-eval-describe
