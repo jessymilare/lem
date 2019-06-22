@@ -11,7 +11,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
            :paredit-insert-paren
            :paredit-insert-doublequote
            :paredit-insert-semicolon
-           :paredit-insert-pipe
+           :paredit-insert-vertical-bar
            :paredit-backward-delete
            :paredit-forward-delete
            :paredit-close-parenthesis
@@ -91,7 +91,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
     (when (in-string-or-comment-p p)
       (insert-character p #\()
       (return-from paredit-insert-paren))
-    (when (eql (character-at p -1) #\\)
+    (when (lem-base::syntax-escape-point-p p 0)
       (insert-character p #\()
       (return-from paredit-insert-paren))
     (unless (or (bolp p)
@@ -121,22 +121,18 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
 (define-command paredit-insert-doublequote () ()
   (let ((p (current-point)))
     (cond
-      ((eql (character-at p -1) #\\)
+      ((lem-base::syntax-escape-point-p p 0)
        (insert-character p #\"))
-      ((and (in-string-p p)
-            (eql (character-at p) #\"))
-       (forward-char))
-      ((and (in-string-p p)
-            (not (eql (character-at p -1) #\\)))
-       (insert-character p #\\)
-       (insert-character p #\"))
+      ((in-string-p p)
+       (if (eql (character-at p) #\")
+           (forward-char)
+           (insert-string p "\"" #\\)))
       (t (unless (or (bolp p)
                      (find (character-at p -1)
                            *non-space-following-chars*)
                      (sharp-literal-p #\P p))
            (insert-character p #\Space))
-         (dolist (c '(#\" #\"))
-           (insert-character p c))
+         (insert-character p #\" 2)
          (unless (or (eolp p)
                      (find (character-at p)
                            *non-space-preceding-chars*))
@@ -160,7 +156,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
       (indent-line origin))
     (insert-character (current-point) #\; n)))
 
-(define-command paredit-insert-pipe (&optional (n 1)) ("p")
+(define-command paredit-insert-vertical-bar (&optional (n 1)) ("p")
   (cond
     ((and (eql (character-at (current-point) -1) #\#)
           (not (in-string-or-comment-p (current-point)))
@@ -172,49 +168,71 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
 
 (define-command paredit-backward-delete (&optional (n 1)) ("p")
   (when (< 0 n)
-    (with-point ((p (current-point)))
+    (let ((p (current-point)))
       (cond
-        ((eql (character-at p -2) #\\)
+        ;; The previous char is escaped
+        ((lem-base::syntax-escape-point-p p -1)
          (delete-previous-char 2))
-        ((or (and (not (in-string-or-comment-p p))
-                  (eql (character-at p -1) #\()
-                  (eql (character-at p) #\)))
-             (and (in-string-p p)
-                  (eql (character-at p -1) #\")
-                  (eql (character-at p) #\")))
+        ;; The previous char is an escaping #\\
+        ((lem-base::syntax-escape-point-p p 0)
          (delete-next-char)
          (delete-previous-char))
-        ((or (and (not (in-string-or-comment-p p))
-                  (or (eql (character-at p -1) #\))
-                      (eql (character-at p -1) #\()
-                      (eql (character-at p -1) #\")))
-             (and (not (in-comment-p p))
-                  (eql (character-at p -1) #\")))
-         (backward-char))       
+        ;; The point is in a string and the previous char is a #\"
+        ((and (in-string-p p) (eql (character-at p -1) #\"))
+         (if (and (eql (character-at p 0) #\"))
+             (progn (delete-next-char)
+                    (delete-previous-char))
+             (backward-char)))
+        ;; The point is in a string and the previous char is not a #\"
+        ;; or it is in a comment
+        ((in-string-or-comment-p p)
+         (delete-previous-char))
+        ;; The previous char is #\(
+        ((eql (character-at p -1) #\()
+         (if (eql (character-at p) #\))
+             (progn (delete-next-char)
+                    (delete-previous-char))
+             (backward-char)))
+        ;; Should not delete #\) nor #\"
+        ((or (eql (character-at p -1) #\))
+             (eql (character-at p -1) #\"))
+         (backward-char))
         (t
          (delete-previous-char))))
     (paredit-backward-delete (1- n))))
 
 (define-command paredit-forward-delete (&optional (n 1)) ("p")
   (when (< 0 n)
-    (with-point ((p (current-point)))
+    (let ((p (current-point)))
       (cond
-        ((eql (character-at p) #\\)
-         (delete-next-char 2))
-        ((or (and (not (in-string-or-comment-p p))
-                  (eql (character-at p -1) #\()
-                  (eql (character-at p) #\)))
-             (and (in-string-p p)
-                  (eql (character-at p -1) #\")
-                  (eql (character-at p) #\")))
+        ;; The next char is escaped
+        ((lem-base::syntax-escape-point-p p 0)
          (delete-next-char)
          (delete-previous-char))
-        ((or (and (not (in-string-or-comment-p p))
-                  (or (eql (character-at p) #\()
-                      (eql (character-at p) #\))
-                      (eql (character-at p) #\")))
-             (and (not (in-comment-p p))
-                  (eql (character-at p) #\")))
+        ;; The next char is an escaping #\\
+        ((lem-base::syntax-escape-point-p p 1)
+         (delete-next-char 2))
+        ;; The point is in a string and the next char is a #\"
+        ((and (in-string-p p) (eql (character-at p) #\"))
+         (if (and (eql (character-at p -1) #\")
+                  (not (lem-base::syntax-escape-point-p p -1)))
+             (progn (delete-next-char)
+                    (delete-previous-char))
+             (forward-char)))
+        ;; The point is in a string and the next char is not a #\"
+        ;; or it is in a comment
+        ((in-string-or-comment-p p)
+         (delete-next-char))
+        ;; The next char is #\)
+        ((eql (character-at p) #\))
+         (if (and (eql (character-at p -1) #\()
+                  (not (lem-base::syntax-escape-point-p p -1)))
+             (progn (delete-next-char)
+                    (delete-previous-char))
+             (forward-char)))
+        ;; Should not delete #\( not #\"
+        ((or (eql (character-at p) #\()
+             (eql (character-at p) #\"))
          (forward-char))
         (t
          (delete-next-char))))
@@ -227,7 +245,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
       (return-from paredit-close-parenthesis))
     (case (character-at p)
       (#\)
-       (if (eql (character-at p -1) #\\)
+       (if (lem-base::syntax-escape-point-p p 0)
            (insert-character p #\))
            (forward-char)))
       (otherwise
@@ -249,21 +267,23 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
     (line-end line-end)
     (skip-whitespace-forward kill-end t)
     (cond
+      ;; Only whitespaces and maybe a line comment after point
       ((or (point<= line-end kill-end)
            (eql (character-at kill-end) #\;))
        (kill-line 1))
-      ((in-string-p origin)
+      ;; Inside a string or comment - kill up to end of line
+      ;; or end of string or comment
+      ((in-string-or-comment-p origin)
        (loop while (and (point>= line-end kill-end)
-                        (in-string-p kill-end))
+                        (in-string-or-comment-p kill-end))
              do (character-offset kill-end 1))
-       (unless (in-string-p kill-end)
-         (character-offset kill-end -1))
-       (kill-region origin kill-end))
-      ((in-comment-p origin)
-       (loop while (and (point>= line-end kill-end)
-                        (not (and (eql (character-at kill-end) #\|)
-                                  (eql (character-at kill-end 1) #\#))))
-             do (character-offset kill-end 1))
+       (unless (in-string-or-comment-p kill-end)
+         (case (character-at kill-end -1)
+           ((#\")
+            (character-offset kill-end -1))
+           ((#\#) ; doublechecking that the char before is #\|
+            (if (eql (character-at kill-end -2) #\|)
+                (character-offset kill-end -2)))))
        (kill-region origin kill-end))
       (t
        (loop while (and (point> line-end kill-end)
@@ -273,9 +293,11 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
                 (cond
                   ((eql (character-at kill-end) #\;)
                    (line-end kill-end)
-                   (character-offset kill-end 1))
+                   (character-offset kill-end 1)
+                   (return))
                   ((eql (character-at kill-end) #\Newline)
-                   (character-offset kill-end 1))))
+                   (character-offset kill-end 1)
+                   (return))))
        (kill-region origin kill-end)))))
 
 (define-command paredit-slurp () ()
@@ -374,7 +396,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
                        (")" . paredit-close-parenthesis)
                        ("\"" . paredit-insert-doublequote)
                        (";" . paredit-insert-semicolon)
-                       ("|" . paredit-insert-pipe)
+                       ("|" . paredit-insert-vertical-bar)
                        (delete-previous-char . paredit-backward-delete)
                        (delete-next-char . paredit-forward-delete)
                        ("C-k" . paredit-kill)
