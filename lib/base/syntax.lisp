@@ -13,6 +13,7 @@
           syntax-closed-paren-char-p
           syntax-string-quote-char-p
           syntax-escape-char-p
+          syntax-escape-point-p
           syntax-expr-prefix-char-p
           syntax-skip-expr-prefix-forward
           syntax-skip-expr-prefix-backward
