@@ -8,7 +8,7 @@
 ;;; See: https://common-lisp.net/project/asdf/asdf/The-defsystem-grammar.html#index-_003aweakly_002ddepends_002don
 
 (defsystem "lem-python-mode/run"
-  :depends-on ("lem-pyton-mode" "lem-process")
+  :depends-on ("lem-python-mode" "lem-process")
   :serial t
   :components ((:file "run-python")))
 
