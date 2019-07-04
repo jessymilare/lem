@@ -140,7 +140,7 @@
 (defun buffer-package (buffer &optional default)
   (let ((package-name (buffer-value buffer "package" default)))
     (typecase package-name
-      ((null) default)
+      (null default)
       ((or symbol string)
        (string-upcase package-name))
       ((cons (or symbol string))
