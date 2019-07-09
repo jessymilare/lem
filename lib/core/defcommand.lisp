@@ -26,14 +26,16 @@
          `(list ,garg))
         ((string= "r" (car arg-descripters))
          `(progn
-            (check-marked)
-            (list (region-beginning) (region-end))))
+           (check-marked)
+           (list (region-beginning) (region-end))))
         (t
          (cons 'list
                (mapcar #'(lambda (arg-descripter)
                            (cond
                              ((char= #\s (aref arg-descripter 0))
                               `(prompt-for-string ,(subseq arg-descripter 1)))
+                             ((char= #\c (aref arg-descripter 0))
+                              `(prompt-for-character ,(subseq arg-descripter 1)))
                              ((char= #\n (aref arg-descripter 0))
                               `(prompt-for-integer ,(subseq arg-descripter 1)))
                              ((char= #\b (aref arg-descripter 0))
@@ -63,15 +65,15 @@
       `(defun ,cmd-name (,garg)
          (declare (ignorable ,garg))
          (block ,fn-name
-         ,(if (null arg-descripters)
-              (progn
-                (assert (null parms))
-                `(,fn-name))
-              `(destructuring-bind ,parms
-                   ,(if (stringp (car arg-descripters))
-                        (define-command-gen-args cmd-name arg-descripters)
-                        (car arg-descripters))
-                 (,fn-name ,@(collect-variables parms)))))))))
+           ,(if (null arg-descripters)
+                (progn
+                 (assert (null parms))
+                 `(,fn-name))
+                `(destructuring-bind ,parms
+                     ,(if (stringp (car arg-descripters))
+                          (define-command-gen-args cmd-name arg-descripters)
+                          (car arg-descripters))
+                   (,fn-name ,@(collect-variables parms)))))))))
 
 (defun find-command (name)
   (car (gethash name *command-table*)))
