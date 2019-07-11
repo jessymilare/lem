@@ -1,12 +1,12 @@
 (defpackage :lem-trailing-spaces
   (:use :cl :lem)
-  (:export))
+  (:export :trailing-spaces
+           :space-attribute))
 (in-package :lem-trailing-spaces)
 
 (define-attribute space-attribute
-  (t :background "cyan"))
-
-(defvar *space-attribute* (make-attribute :background "cyan"))
+  (:light :background "cyan")
+  (:dark  :background "dark blue"))
 
 (define-minor-mode trailing-spaces
     (:name "Trailing Spaces"
