@@ -178,7 +178,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
   (when (< 0 n)
     (let ((p (current-point)))
       (cond
-        ((lem-paredit-mode::bolp p)
+        ((bolp p)
          (delete-previous-char))
         ;; The previous char is escaped
         ((lem-base::syntax-escape-point-p p -1)
@@ -215,7 +215,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
   (when (< 0 n)
     (let ((p (current-point)))
       (cond
-        ((lem-paredit-mode::eolp p)
+        ((eolp p)
          (delete-next-char))
         ;; The next char is escaped
         ((lem-base::syntax-escape-point-p p 0)

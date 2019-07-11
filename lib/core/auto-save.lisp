@@ -1,6 +1,10 @@
 (defpackage :lem.auto-save
   (:use :cl :lem)
-  (:export :*make-backup-files*)
+  (:export :*make-backup-files*
+           :auto-save-mode
+           :toggle-auto-save
+           :auto-save-checkpoint-frequency
+           :auto-save-key-count-threshold)
   #+sbcl
   (:lock t))
 (in-package :lem.auto-save)
