@@ -84,9 +84,7 @@
          (let* ((name (file-namestring filename))
                 (buffer (make-buffer (if temporary
                                          name
-                                         (if (get-buffer name)
-                                             (uniq-buffer-name name)
-                                             name))
+                                         (new-buffer-name name filename))
                                      :enable-undo-p nil
                                      :temporary temporary)))
            (setf (buffer-filename buffer) filename)

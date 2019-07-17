@@ -201,7 +201,7 @@
   (let* ((name (pathname-directory-last-name filename))
          (buffer (get-buffer name)))
     (cond ((and buffer (not (uiop:pathname-equal filename (buffer-directory buffer))))
-           (create-directory-buffer (uniq-buffer-name name) filename))
+           (create-directory-buffer (new-buffer-name name filename) filename))
           ((null buffer)
            (create-directory-buffer name filename))
           (t

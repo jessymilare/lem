@@ -4,7 +4,9 @@
           buffer-list
           any-modified-buffer-p
           get-buffer
-          uniq-buffer-name
+          new-buffer-name
+          new-buffer-name-function
+          new-buffer-name/number
           unbury-buffer
           bury-buffer
           get-next-buffer
@@ -44,13 +46,34 @@
                             (buffer-name buffer)))
                (buffer-list))))
 
-(defun uniq-buffer-name (name)
-  (if (null (get-buffer name))
-      name
-      (do ((n 1 (1+ n))) (nil)
-        (let ((name (format nil "~a<~d>" name n)))
-          (unless (get-buffer name)
-            (return name))))))
+(define-editor-variable new-buffer-name-function
+  'new-buffer-name/number
+  "Defines a function that is called before creating a buffer with a unique name.
+ It is called several times until it finds a name that is not used by any other
+ buffer.
+ This function must receive three arguments:
+   `name`, which is the proposed name for the new buffer;
+   `namestring`, representing the pathname of the file being opened in buffer or
+     `nil` if buffer will not contain a filename.
+   `trial-number`, a non-negative integer, initially zero, that increases at each
+     call for creating one buffer. It can be used to compose the buffer name.
+ It is safe to simply return `name` when `trial-number`` is zero. This function may
+ rename existing buffers in case of conflicts (first ensuring no buffer with that
+ name exists) and must return a string for the new buffer name.")
+
+(defun new-buffer-name (name namestring)
+  (let ((create (variable-value 'new-buffer-name-function)))
+    (labels ((rec (n)
+               (let ((name (funcall create name namestring n)))
+                 (check-type name string "Invalid buffer name")
+                 (if (not (get-buffer name))
+                     name
+                     (rec (1+ n))))))
+      (rec 0))))
+
+(defun new-buffer-name/number (name namestring trial-number)
+  (declare (ignore namestring))
+  (format nil "~a~[~:;~:*<~d>~]" name trial-number))
 
 (defun delete-buffer (buffer)
   "`buffer`をバッファのリストから消します。

@@ -12,7 +12,6 @@
           revert-buffer
           change-directory))
 
-
 (defun expand-files* (filename)
   (directory-files (expand-file-name filename (buffer-directory))))
 
