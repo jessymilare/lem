@@ -639,7 +639,7 @@
        (move-point sexp-point start-point)
        (with-point ((limit sexp-point :temporary))
          (let ((limit-arg (line-offset limit (- *region-scan-lines-limit*))))
-           (point-go-to-list-start limit-arg)))))
+           (point-go-to-list-start sexp-point limit-arg)))))
     ;; Dispatch accordingly
     (let* ((line-start-num (line-number-at-point start-point))
            (line-end-num   (1+ (line-number-at-point end-point)))
