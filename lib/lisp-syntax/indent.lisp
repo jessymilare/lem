@@ -6,6 +6,7 @@
            :update-system-indentation
            :indentation-update
            :calc-indent
+           :calc-indent-region
            :&lambda))
 (in-package :lem-lisp-syntax.indent)
 
@@ -28,16 +29,24 @@
 (defvar *lisp-indent-quoted-override* t)
 (defvar *lisp-indent-vector-override* t)
 
-(declaim (inline point-go-to-next-sexp point-go-to-previous-sexp point-go-to-line
+(defvar *region-scan-lines-limit* 100)
+
+(declaim (inline point-next-list point-previous-list point-go-to-line
                  point-min point-max indentation-at-point))
 
-(defun point-go-to-next-sexp (point &optional end-point)
+(defun point-next-list (point &optional end-point)
   (when (scan-lists point 1 -1 t end-point)
     (character-offset point -1)
-    t))
+    point))
 
-(defun point-go-to-previous-sexp (point &optional start-point)
+(defun point-previous-list (point &optional start-point)
   (scan-lists point -1 0 t start-point))
+
+(defun point-go-to-list-end (point &optional end-point)
+  (scan-lists point 1 1 t end-point))
+
+(defun point-go-to-list-start (point &optional start-point)
+  (scan-lists point -1 1 t start-point))
 
 (defun point-go-to-line (point line-number &optional (charpos 0))
   (line-offset point (- line-number (line-number-at-point point)) charpos))
@@ -247,8 +256,8 @@
         ("with-standard-io-syntax" (2))))
 
 (defun defpackage-body (path indent-point sexp-column)
-  (declare (ignore path sexp-column))
-  (calc-function-indent indent-point))
+  (declare (ignore path indent-point sexp-column))
+  'default-indent)
 
 (defun loop-type (point)
   (let ((comment-split nil))
@@ -525,19 +534,17 @@
                      ((not method1) 'default-indent)
                      ((symbolp method1) method1)))))
 
-(defun compute-indent-method (method path indent-point sexp-column)
-  (funcall (etypecase method
-             (integer #'compute-indent-integer-method)
-             (symbol #'compute-indent-symbol-method)
-             (list #'compute-indent-complex-method))
-           method path indent-point sexp-column))
-
-(defun compute-indent/default (method rev-path point sexp-column default-column)
+(defun compute-indent-method (method path indent-point sexp-column
+                              &optional (default 'default-indent))
   (if (or (not method) (eq method 'default-indent))
-      default-column
-      (let ((indent (compute-indent-method method rev-path point sexp-column)))
+      default
+      (let ((indent (funcall (etypecase method
+                               (integer #'compute-indent-integer-method)
+                               (symbol #'compute-indent-symbol-method)
+                               (list #'compute-indent-complex-method))
+                             method path indent-point sexp-column)))
         (if (or (not indent) (eq indent 'default-indent))
-            default-column
+            default
             indent))))
 
 (defun quote-form-point-p (p)
@@ -545,7 +552,7 @@
        (not (eql (character-at p -2) #\#))))
 
 (defun vector-form-point-p (p)
-  (eql (character-at p -1) #\#))  
+  (eql (character-at p -1) #\#))
 
 (defun find-indent-method (name &optional path)
   (declare (ignore path))
@@ -581,8 +588,7 @@
        (skip-space-and-comment-forward point)
        (cond
          ((eql (character-at point) #\:)
-          (when (or (find parent-method '(nil default-indent))
-                    (integerp parent-method))
+          (when (find parent-method '(nil default-indent))
             'lisp-indent-sexp-with-key))
          ((eql (character-at point) #\")
           'lisp-indent-sexp-with-string)
@@ -592,38 +598,36 @@
           (let ((name (symbol-string-at-point point)))
             (find-indent-method name '(1)))))))))
 
-(defun calc-function-indent (point)
-  (loop
-    (unless (form-offset point -1)
-      (let ((charpos (point-charpos point)))
-        (form-offset point 1)
-        (skip-whitespace-forward point t)
-        (when (or (eql #\; (character-at point))
-                  (end-line-p point))
-          (line-offset point 0 charpos)))
-      (return))
-    (let ((charpos (point-charpos point)))
-      (back-to-indentation point)
-      (when (= charpos (point-charpos point))
-        (return))
-      (line-offset point 0 charpos)))
-  (point-column point))
-
-(defconstant +region-scan-lines-limit+ 100)
+;; (defun calc-function-indent (point)
+;;   (loop
+;;     (unless (form-offset point -1)
+;;       (let ((charpos (point-charpos point)))
+;;         (form-offset point 1)
+;;         (skip-whitespace-forward point t)
+;;         (when (or (eql #\; (character-at point))
+;;                   (end-line-p point))
+;;           (line-offset point 0 charpos)))
+;;       (return))
+;;     (let ((charpos (point-charpos point)))
+;;       (back-to-indentation point)
+;;       (when (= charpos (point-charpos point))
+;;         (return))
+;;       (line-offset point 0 charpos)))
+;;   (point-column point))
 
 (defun calc-indent-region (start-point end-point)
   (if (point< end-point start-point)
       (rotatef start-point end-point))
-  (with-point ((start-point start-point)
-               (end-point   end-point)
-               (sexp-point  start-point))
-    (line-start start-point)
-    (line-start end-point)
+  (line-start start-point)
+  (line-start end-point)
+  (with-point ((sexp-point start-point :temporary)
+               (sexp-point-at-end start-point :temporary))
+    (line-offset sexp-point -1)
     ;; Try finding a toplevel form before start-point,
     ;; which is a lot faster than scan-lists
     (loop :while (and (not (syntax-open-paren-char-p (character-at sexp-point)))
                       (line-offset sexp-point -1))
-          :repeat (* 10 +region-scan-lines-limit+))
+          :repeat *region-scan-lines-limit*)
     (cond
       ;; Found toplevel form?
       ((syntax-open-paren-char-p (character-at sexp-point)))
@@ -633,63 +637,70 @@
       ;; If no toplevel form was found, scan to a parent sexp
       (t
        (move-point sexp-point start-point)
-       (with-point ((limit sexp-point))
-         (let ((limit-arg (line-offset limit (- +region-scan-lines-limit+))))
-           (scan-lists sexp-point -1 1 t limit-arg)))))
+       (with-point ((limit sexp-point :temporary))
+         (let ((limit-arg (line-offset limit (- *region-scan-lines-limit*))))
+           (point-go-to-list-start limit-arg)))))
     ;; Dispatch accordingly
     (let* ((line-start-num (line-number-at-point start-point))
            (line-end-num   (1+ (line-number-at-point end-point)))
            (indent-vector  (make-array (- line-end-num line-start-num)
                                        :initial-element 0)))
-      (loop :until (region-indent-line-p end-point) :do
-               (line-offset end-point -1))
-      (loop :until (region-indent-line-p start-point) :do
-               (line-offset start-point 1))
-      (with-point ((indent-point start-point))
-        (when (point= sexp-point start-point)
-          (line-offset indent-point 1))
-        (loop :for sexp-column :=
-                 (%point-column-after-indent sexp-point indent-vector line-start-num)
-              :do
-                 (%calc-indent/vector sexp-point sexp-column indent-point end-point
-                                      indent-vector line-start-num
-                                      'default-indent nil)
-                 (point-go-to-line sexp-point (line-number-at-point indent-point))
-              :while (and (point<= sexp-point end-point)
-                          (point-go-to-next-sexp sexp-point)
-                          (point<= sexp-point end-point))
-              :do (loop :for line :from (- (line-number-at-point indent-point)
-                                           line-start-num)
-                        :while (point<= indent-point sexp-point) :do
-                           (unless (region-indent-line-p indent-point)
-                             (setf (svref indent-vector line)
-                                   (point-column indent-point)))
-                           (line-offset indent-point 1))))
+      (with-point ((indent-point start-point :temporary))
+        (loop :with sexp-column :=
+                 (%point-column-after-indent sexp-point indent-vector line-start-num
+                                             end-point)
+              :while (and (move-point sexp-point-at-end sexp-point)
+                          (form-offset sexp-point-at-end 1))
+              :do (when (point<= indent-point sexp-point-at-end)
+                    (%calc-indent/vector sexp-point sexp-column
+                                         indent-point end-point
+                                         indent-vector line-start-num
+                                         'default-indent nil))
+              :while (point<= indent-point end-point)
+              ;; %calc-indent/vector moves sexp-point to end of sexp
+              :do (move-point sexp-point sexp-point-at-end)
+                  (unless (point-next-list sexp-point)
+                    (line-offset sexp-point 1)
+                    (if (point<= sexp-point end-point)
+                        (setf (svref indent-vector (- (line-number-at-point sexp-point)
+                                                      line-start-num))
+                              (indentation-at-point sexp-point))
+                        (return)))
+                  (setf sexp-column
+                        (%compute-indent/vector 'default-indent nil
+                                                indent-point 0 sexp-column
+                                                (point-min sexp-point end-point)
+                                                indent-vector line-start-num))
+              :while (point<= indent-point end-point)))
       indent-vector)))
 
 (defun region-indent-line-p (point)
-  (not (or (blank-line-p point) (in-string-or-comment-p point))))
+  (not (in-string-or-comment-p point)))
 
 (defun %compute-indent/vector (method path indent-point sexp-column default-column
                                end-point indent-vector line-start-num)
-  (when (<= line-start-num (line-number-at-point end-point))
-    (loop :while (point<= indent-point end-point)
-          :for indent-line := (line-number-at-point indent-point)
-          :for i := (- indent-line line-start-num)
-          :do (if (region-indent-line-p indent-point)
-                  (setf default-column
-                        (compute-indent/default method path indent-point
-                                                sexp-column default-column)
-                        (svref indent-vector i) default-column)
-                  (setf (svref indent-vector i) (point-column indent-point)))
-          :while (and (line-offset indent-point 1)
-                      (< indent-line (line-number-at-point indent-point)))
-          :finally (return default-column))))
+  ;; (log:info "compute" method path sexp-column default-column indent-point)
+  (let ((indent-line (line-number-at-point indent-point)))
+    (if (<= line-start-num indent-line)
+        (loop :while (point<= indent-point end-point)
+              :for i := (- indent-line line-start-num)
+              :do (if (region-indent-line-p indent-point)
+                      (setf default-column
+                            (compute-indent-method method path indent-point
+                                                   sexp-column default-column)
+                            (svref indent-vector i) default-column)
+                      (setf (svref indent-vector i) (point-column indent-point)))
+              :while (and (line-offset indent-point 1)
+                          (< indent-line (line-number-at-point indent-point)))
+              :do (incf indent-line)
+              :finally (return default-column))
+        default-column)))
 
-(defun %point-column-after-indent (point indent-vector line-start-num)
+(defun %point-column-after-indent (point indent-vector line-start-num end-point)
   (let* ((point-line   (line-number-at-point point))
          (point-column (point-column point)))
-    (if (<= line-start-num point-line)
+    (if (and (<= line-start-num point-line)
+             (point<= point end-point))
         (+ point-column ; remove old indent and insert new one
            (- (indentation-at-point point))
            (svref indent-vector (- point-line line-start-num)))
@@ -698,8 +709,8 @@
 (defun %calc-indent/vector (sexp-point sexp-column indent-point end-point
                             indent-vector line-start-num
                             parent-method parent-rev-path)
-  (with-point ((point sexp-point)
-               (point-at-end sexp-point))
+  (with-point ((point sexp-point :temporary)
+               (point-at-end sexp-point :temporary))
     ;; Go inside sexp
     (character-offset point 1)
     (character-offset point-at-end 1)
@@ -715,27 +726,26 @@
             :for n :from 0
             :for rev-path := (cons n parent-rev-path)
             :do
-               (unless (and (form-offset point-at-end 1)
-                            (point<= point-at-end end-point))
+               (unless (form-offset point-at-end 1)
                  (setq last-loop t))
                (cond
                  ((< previous-line point-line)
                   ;; New line - need indenting
                   ;; Indent at most to end-point
-                  (if (and (<= line-start-num point-line)
-                           (point<= indent-point point))
-                      (let* ((path (reverse rev-path))
-                             (end-point (point-min point end-point)))
+                  (if (<= line-start-num point-line)
+                      (let ((path (reverse rev-path)))
                         (setq default-column
                               (%compute-indent/vector method path indent-point
                                                       sexp-column default-column
-                                                      end-point
-                                                      indent-vector line-start-num)))
+                                                      (point-min point end-point)
+                                                      indent-vector line-start-num))
+                        (unless (point< point indent-point)
+                          (line-offset indent-point 1)))
                       ;; Don't indent yet
                       (setq default-column (point-column point))))
                  ((= n 0)
                   ;; Don't need to indent, but need to compute 'default-column'
-                  (with-point ((aux point))
+                  (with-point ((aux point :temporary))
                     (let ((ref-point (if (and (form-offset aux 1)
                                               (skip-whitespace-forward aux t)
                                               (not (end-line-p aux))
@@ -743,72 +753,80 @@
                                          aux
                                          point)))
                       (setq default-column (%point-column-after-indent
-                                            ref-point indent-vector line-start-num))))))
-               ;; Loop into this form if it is inside the indenting region
-               (when (point<= indent-point point-at-end)
-                 ;; Sexp?
-                 (skip-chars-forward point #'syntax-expr-prefix-char-p)
-                 (when (syntax-open-paren-char-p (character-at point))
-                   (let ((rev-path (if (consp method) '() rev-path))
-                         (method (if (consp method)
-                                     (compute-indent-complex-submethod method n)
-                                     method))
-                         (sexp-column (%point-column-after-indent
-                                       point indent-vector line-start-num)))
-                     (%calc-indent/vector point sexp-column indent-point end-point
-                                          indent-vector line-start-num
-                                          method rev-path))))
-            :until last-loop
+                                            ref-point indent-vector line-start-num
+                                            end-point))))))
+               (skip-chars-forward point #'syntax-expr-prefix-char-p)
+               ;; Sexp?
+            :while (point<= indent-point end-point)
+            :do (when (point<= indent-point point-at-end)
+                  (skip-chars-forward point #'syntax-expr-prefix-char-p)
+                  (when (syntax-open-paren-char-p (character-at point))
+                    (let ((rev-path (if (or (consp method) (integerp method))
+                                        '()
+                                        rev-path))
+                          (method (cond
+                                    ((consp method)
+                                     (compute-indent-complex-submethod method n))
+                                    ((integerp method) 'default-indent)
+                                    (t  method)))
+                          (sexp-column (%point-column-after-indent
+                                        point indent-vector line-start-num
+                                        end-point)))
+                      (%calc-indent/vector point sexp-column indent-point end-point
+                                           indent-vector line-start-num
+                                           method rev-path))))
+            :while (and (point<= indent-point end-point)
+                        (not last-loop))
             :do (move-point point point-at-end)
                 (skip-space-and-comment-forward point)
-            :finally (return indent-vector)))))
+                (move-point point-at-end point)))))
 
-(defun calc-indent-1 (indent-point)
-  (let* ((const-flag nil)
-         (innermost-sexp-column nil)
-         (calculated
-           (with-point ((p indent-point))
-             (loop
-               :named outer
-               :with path := '() :and sexp-column
-               :for innermost := t :then nil
-               :repeat *max-depth*
-               :do
-                  (loop :for n :from 0 :do
-                           (when (and (< 0 n) (start-line-p p))
-                             (return-from outer nil))
-                           (unless (form-offset p -1)
-                             (push n path)
-                             (return)))
-                  (when (and (null (cdr path))
-                             (= 0 (car path))
-                             (scan-lists p -1 1 t))
-                    (return-from outer (1+ (point-column p))))
-                  (when (and innermost
-                             (or (member (character-at p 0) '(#\: #\"))
-                                 (looking-at p "#!?[+-]")))
-                    (setf const-flag t))
-                  (let ((name (symbol-string-at-point p)))
-                    (unless (scan-lists p -1 1 t)
-                      (return-from outer 'default-indent))
-                    (unless sexp-column (setf sexp-column (point-column p)))
-                    (when (or (quote-form-point-p p)
-                              (vector-form-point-p p))
-                      (return-from outer (1+ sexp-column)))
-                    (when innermost
-                      (setf innermost-sexp-column sexp-column))
-                    (let ((method (find-indent-method name path)))
-                      (when method
-                        (return-from outer (compute-indent-method method
-                                                                  path
-                                                                  indent-point
-                                                                  sexp-column)))))))))
-    (if (or (null calculated)
-            (eq calculated 'default-indent))
-        (if (and const-flag innermost-sexp-column)
-            (1+ innermost-sexp-column)
-            (calc-function-indent indent-point))
-        calculated)))
+;; (defun calc-indent-1 (indent-point)
+;;   (let* ((const-flag nil)
+;;          (innermost-sexp-column nil)
+;;          (calculated
+;;            (with-point ((p indent-point))
+;;              (loop
+;;                :named outer
+;;                :with path := '() :and sexp-column
+;;                :for innermost := t :then nil
+;;                :repeat *max-depth*
+;;                :do
+;;                   (loop :for n :from 0 :do
+;;                            (when (and (< 0 n) (start-line-p p))
+;;                              (return-from outer nil))
+;;                            (unless (form-offset p -1)
+;;                              (push n path)
+;;                              (return)))
+;;                   (when (and (null (cdr path))
+;;                              (= 0 (car path))
+;;                              (scan-lists p -1 1 t))
+;;                     (return-from outer (1+ (point-column p))))
+;;                   (when (and innermost
+;;                              (or (member (character-at p 0) '(#\: #\"))
+;;                                  (looking-at p "#!?[+-]")))
+;;                     (setf const-flag t))
+;;                   (let ((name (symbol-string-at-point p)))
+;;                     (unless (scan-lists p -1 1 t)
+;;                       (return-from outer 'default-indent))
+;;                     (unless sexp-column (setf sexp-column (point-column p)))
+;;                     (when (or (quote-form-point-p p)
+;;                               (vector-form-point-p p))
+;;                       (return-from outer (1+ sexp-column)))
+;;                     (when innermost
+;;                       (setf innermost-sexp-column sexp-column))
+;;                     (let ((method (find-indent-method name path)))
+;;                       (when method
+;;                         (return-from outer (compute-indent-method method
+;;                                                                   path
+;;                                                                   indent-point
+;;                                                                   sexp-column)))))))))
+;;     (if (or (null calculated)
+;;             (eq calculated 'default-indent))
+;;         (if (and const-flag innermost-sexp-column)
+;;             (1+ innermost-sexp-column)
+;;             (calc-function-indent indent-point))
+;;         calculated)))
 
 (defun calc-indent (point)
   (line-start point)
@@ -818,4 +836,4 @@
         ((pps-state-string-p state) nil)
         ((zerop (pps-state-paren-depth state))
          0)
-        (t (calc-indent-1 point))))))
+        (t (aref (calc-indent-region point point) 0))))))

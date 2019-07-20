@@ -195,6 +195,10 @@
   (let ((lem-lisp-syntax:*get-method-function* #'indent-spec))
     (lem-lisp-syntax:calc-indent point)))
 
+(defun calc-indent-region (start-point end-point)
+  (let ((lem-lisp-syntax:*get-method-function* #'indent-spec))
+    (lem-lisp-syntax:calc-indent-region start-point end-point)))
+
 (defun lisp-rex (form &key
                       continuation
                       (thread (current-swank-thread))
