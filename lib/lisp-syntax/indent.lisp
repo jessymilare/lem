@@ -586,17 +586,17 @@
        ;; Go to first form in sexp
        (character-offset point 1)
        (skip-space-and-comment-forward point)
-       (cond
-         ((eql (character-at point) #\:)
-          (when (find parent-method '(nil default-indent))
-            'lisp-indent-sexp-with-key))
-         ((eql (character-at point) #\")
-          'lisp-indent-sexp-with-string)
-         ((looking-at point "#!?[+-]")
-          'lisp-indent-sexp-with-conditional-read)
-         (t
-          (let ((name (symbol-string-at-point point)))
-            (find-indent-method name '(1)))))))))
+       (let ((name (symbol-string-at-point point)))
+          (or (find-indent-method name '(1))
+              (cond
+                ((eql (character-at point) #\:)
+                 (when (find parent-method '(nil default-indent))
+                   'lisp-indent-sexp-with-key))
+                ((eql (character-at point) #\")
+                 'lisp-indent-sexp-with-string)
+                ((looking-at point "#!?[+-]")
+                 'lisp-indent-sexp-with-conditional-read)
+                (t nil))))))))
 
 ;; (defun calc-function-indent (point)
 ;;   (loop
@@ -644,12 +644,14 @@
     (let* ((line-start-num (line-number-at-point start-point))
            (line-end-num   (1+ (line-number-at-point end-point)))
            (indent-vector  (make-array (- line-end-num line-start-num)
-                                       :initial-element 0)))
+                                       :initial-element 0))
+           (sexp-column 0))
+      (when (and (point= start-point sexp-point)
+                 (in-string-or-comment-p sexp-point))
+        (setf (svref indent-vector 0)
+              (setf sexp-column (indentation-at-point sexp-point))))
       (with-point ((indent-point start-point :temporary))
-        (loop :with sexp-column :=
-                 (%point-column-after-indent sexp-point indent-vector line-start-num
-                                             end-point)
-              :while (and (move-point sexp-point-at-end sexp-point)
+        (loop :while (and (move-point sexp-point-at-end sexp-point)
                           (form-offset sexp-point-at-end 1))
               :do (when (point<= indent-point sexp-point-at-end)
                     (%calc-indent/vector sexp-point sexp-column
@@ -657,7 +659,6 @@
                                          indent-vector line-start-num
                                          'default-indent nil))
               :while (point<= indent-point end-point)
-              ;; %calc-indent/vector moves sexp-point to end of sexp
               :do (move-point sexp-point sexp-point-at-end)
                   (unless (point-next-list sexp-point)
                     (line-offset sexp-point 1)
@@ -689,7 +690,7 @@
                             (compute-indent-method method path indent-point
                                                    sexp-column default-column)
                             (svref indent-vector i) default-column)
-                      (setf (svref indent-vector i) (point-column indent-point)))
+                      (setf (svref indent-vector i) (indentation-at-point indent-point)))
               :while (and (line-offset indent-point 1)
                           (< indent-line (line-number-at-point indent-point)))
               :do (incf indent-line)
