@@ -27,6 +27,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
 
 (define-minor-mode paredit-mode
     (:name "paredit"
+     :description "Helps to handle parentheses balanced in your Lisp code."
      :keymap *paredit-mode-keymap*))
 
 (defun move-to-word-end (q)
@@ -178,7 +179,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
   (when (< 0 n)
     (let ((p (current-point)))
       (cond
-        ((bolp p)
+        ((lem-paredit-mode::bolp p)
          (delete-previous-char))
         ;; The previous char is escaped
         ((lem-base::syntax-escape-point-p p -1)
@@ -191,7 +192,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
         ((and (in-string-p p) (eql (character-at p -1) #\"))
          (if (and (eql (character-at p 0) #\"))
              (progn (delete-next-char)
-                    (delete-previous-char))
+               (delete-previous-char))
              (backward-char)))
         ;; The point is in a string and the previous char is not a #\"
         ;; or it is in a comment
@@ -201,7 +202,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
         ((eql (character-at p -1) #\()
          (if (eql (character-at p) #\))
              (progn (delete-next-char)
-                    (delete-previous-char))
+               (delete-previous-char))
              (backward-char)))
         ;; Should not delete #\) nor #\"
         ((or (eql (character-at p -1) #\))
@@ -215,7 +216,7 @@ link : http://www.daregada.sakuraweb.com/paredit_tutorial_ja.html
   (when (< 0 n)
     (let ((p (current-point)))
       (cond
-        ((eolp p)
+        ((lem-paredit-mode::eolp p)
          (delete-next-char))
         ;; The next char is escaped
         ((lem-base::syntax-escape-point-p p 0)
