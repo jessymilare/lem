@@ -103,7 +103,7 @@
                                                    expand-file-name))))
       (directory-for-file-or-lose filename)
       (unless (string= old new)
-        (buffer-rename (current-buffer) (new-buffer-name name expand-file-name)))
+        (buffer-rename (current-buffer) (new-buffer-name new expand-file-name)))
       (setf (buffer-filename) expand-file-name)
       (add-newline-at-eof (current-buffer))
       (save-buffer t))))
