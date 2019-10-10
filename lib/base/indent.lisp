@@ -3,13 +3,11 @@
 (export '(back-to-indentation
           indent-tabs-mode
           calc-indent-function
-          calc-indent-region-function
           indent-line
           indent-region))
 
 (define-editor-variable indent-tabs-mode nil)
 (define-editor-variable calc-indent-function 'calc-indent-default)
-(define-editor-variable calc-indent-region-function nil)
 
 (defun back-to-indentation (point)
   (skip-whitespace-forward (line-start point) t)
@@ -63,17 +61,7 @@
     (indent-line-1 point column)))
 
 (defun indent-region (start end)
-  (alexandria:if-let (indent-region-function
-                      (variable-value 'calc-indent-region-function :buffer start))
-    (let ((vector (funcall indent-region-function
-                           (copy-point start :temporary)
-                           (copy-point end :temporary))))
-      (with-point ((point start :temporary))
-        (loop :for column :across vector
-              :do (unless (blank-line-p point)
-                    (indent-line-1 point column))
-                  (line-offset point 1))))
-    (apply-region-lines start end
-                        (lambda (point)
-                          (unless (blank-line-p point)
-                            (indent-line point))))))
+  (apply-region-lines start end
+                      (lambda (point)
+                        (unless (blank-line-p point)
+                          (indent-line point)))))
