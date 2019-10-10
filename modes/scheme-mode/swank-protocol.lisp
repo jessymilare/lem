@@ -1,5 +1,5 @@
-(defpackage lem-lisp-mode.swank-protocol
-  (:use :cl :lem-lisp-mode.errors)
+(defpackage lem-scheme-mode.swank-protocol
+  (:use :cl :lem-scheme-mode.errors)
   (:import-from :trivial-types
                 :association-list
                 :proper-list)
@@ -36,12 +36,26 @@
            :connection-machine-version
            :connection-swank-version)
   (:documentation "Low-level implementation of a client for the Swank protocol."))
-(in-package :lem-lisp-mode.swank-protocol)
+(in-package :lem-scheme-mode.swank-protocol)
+
+;; debug log
+(defun dbg-log-format (fmt &rest args)
+  (with-open-file (out "lemlog_swankproto0001.txt"
+                       :direction :output
+                       :if-does-not-exist :create
+                       :if-exists :append)
+    (fresh-line out)
+    (apply #'format out fmt args)
+    (terpri out)))
 
 (defmacro with-swank-syntax (() &body body)
   `(with-standard-io-syntax
      (let ((*package* (find-package :swank-io-package))
-           (*print-case* :downcase))
+           (*print-case* :downcase)
+           ;; for r7rs-swank
+           ;;  (string literal such as '#a((8) common-lisp:base-char . "filepath")'
+           ;;   is not accepted)
+           (*print-readably* nil))
        ,@body)))
 
 ;;; Encoding and decoding messages
@@ -104,7 +118,7 @@ Parses length information to determine how many characters to read."
     :documentation "A number that is increased and sent along with every request.")
    (package
     :accessor connection-package
-    :initform "COMMON-LISP-USER"
+    :initform "user"
     :type string
     :documentation "The name of the connection's package.")
    (prompt-string
@@ -144,7 +158,7 @@ Parses length information to determine how many characters to read."
     :initform nil
     :accessor connection-process-directory)
    (plist :initform nil :accessor connection-plist))
-  (:documentation "A connection to a remote Lisp."))
+  (:documentation "A connection to a remote Scheme."))
 
 (defun new-connection (hostname port)
   (let* ((socket (usocket:socket-connect hostname port :element-type '(unsigned-byte 8)))
@@ -344,6 +358,37 @@ to check if input is available."
           (intern (string-upcase (string-left-trim ":" name))
                   :keyword))))))
 
+;; for r7rs-swank (replace backslash character sequence)
+(defun read-string (in)
+  (let ((token
+         (coerce (loop :for c := (peek-char nil in nil)
+                       :with c2
+                       :with clist
+                       :with dq-count := 0
+                       :until (or (null c) (>= dq-count 2))
+                       :do (read-char in)
+                           (when (char= c #\") (incf dq-count))
+                           (cond
+                             ((char= c #\\)
+                              (setf c2 (peek-char nil in nil))
+                              (unless (null c2) (read-char in))
+                              (cond
+                                ((null c2)
+                                 (push c clist))
+                                ((char= c2 #\n)
+                                 (push #\newline clist))
+                                ((char= c2 #\t)
+                                 (push #\tab clist))
+                                (t
+                                 (push c clist)
+                                 (push c2 clist))))
+                             (t
+                              (push c clist)))
+                       :finally (return (reverse clist)))
+                 'string)))
+    ;(dbg-log-format "string=~S" token)
+    (read-from-string token)))
+
 (defun read-list (in)
   (read-char in)
   (loop :until (eql (peek-char t in) #\))
@@ -368,7 +413,8 @@ to check if input is available."
       ((#\()
        (read-list in))
       ((#\")
-       (read in))
+       ;(read in))
+       (read-string in))
       ((#\#)
        (read-sharp in))
       (otherwise

@@ -14,30 +14,7 @@
   *windows-term-type*)
 (defun (setf windows-term-type) (v)
   (setf *windows-term-type* v)
-  (setf *windows-term-setting*
-        (case v
-          (:mintty
-           (make-windows-term-setting
-            :disp-char-width t
-            :pos-char-width  t
-            :cur-char-width  t
-            :cur-mov-by-pos  nil
-            :reserved-last-lines 0))
-          (:conemu
-           (make-windows-term-setting
-            :disp-char-width t
-            :pos-char-width  t
-            :cur-char-width  nil
-            :cur-mov-by-pos  t
-            :reserved-last-lines 0))
-          (t
-           (make-windows-term-setting
-            :disp-char-width nil
-            :pos-char-width  nil
-            :cur-char-width  nil
-            :cur-mov-by-pos  nil
-            ;; reserve last line for windows ime
-            :reserved-last-lines 1))))
+  (update-windows-term-setting)
   v)
 
 ;; windows terminal setting
@@ -65,6 +42,31 @@
                   ;; reserve last lines for windows ime and so on
                   ;;   fixnum : number of reserved lines
   )
+(defun update-windows-term-setting ()
+  (setf *windows-term-setting*
+        (case *windows-term-type*
+          (:mintty
+           (make-windows-term-setting
+            :disp-char-width t
+            :pos-char-width  t
+            :cur-char-width  t
+            :cur-mov-by-pos  nil
+            :reserved-last-lines 0))
+          (:conemu
+           (make-windows-term-setting
+            :disp-char-width t
+            :pos-char-width  t
+            :cur-char-width  nil
+            :cur-mov-by-pos  t
+            :reserved-last-lines 0))
+          (t
+           (make-windows-term-setting
+            :disp-char-width nil
+            :pos-char-width  nil
+            :cur-char-width  nil
+            :cur-mov-by-pos  nil
+            ;; reserve last line for windows ime
+            :reserved-last-lines 1)))))
 (defmethod calc-disp-char-width ((wt windows-term-setting) code)
   (let ((fn (windows-term-setting-disp-char-width wt)))
     (if (functionp fn)
@@ -89,9 +91,11 @@
             (if (lem-base:wide-char-p (code-char code)) 2 1)))))
 (defmethod (setf reserved-last-lines) (v (wt windows-term-setting))
   (setf (windows-term-setting-reserved-last-lines wt) v)
-  (setf *resizing* t)
+  (setf (now-resizing) t)
   (lem::change-display-size-hook)
   v)
+
+;; initialize windows terminal type and setting
 (setf (windows-term-type) *windows-term-type*)
 
 ;; load windows dll
@@ -103,8 +107,8 @@
        (sysdir ""))
   (if (zerop (cffi:foreign-funcall "GetSystemDirectoryA"
                                    :pointer cbuf :int csize :int))
-    (error "winmm.dll load error (GetSystemDirectoryA failed)")
-    (setf sysdir (concatenate 'string (cffi:foreign-string-to-lisp cbuf) "\\")))
+      (error "winmm.dll load error (GetSystemDirectoryA failed)")
+      (setf sysdir (concatenate 'string (cffi:foreign-string-to-lisp cbuf) "\\")))
   (cffi:load-foreign-library (concatenate 'string sysdir "winmm.dll"))
   (cffi:foreign-free cbuf))
 
@@ -156,6 +160,8 @@
 ;; for resizing display
 (defkeycode "[resize]" #x222)
 (defvar *resizing* nil)
+(defun now-resizing () *resizing*)
+(defun (setf now-resizing) (v) (setf *resizing* v))
 (defvar *min-cols*  5)
 (defvar *min-lines* 3)
 
@@ -175,6 +181,8 @@
     (terpri out)))
 
 ;; use only stdscr
+;;  (we don't make a new scrwin to avoid the display corruption of
+;;   horizontal splitted window with wide characters)
 (defmethod lem-if:make-view
     ((implementation ncurses) window x y width height use-modeline)
   (make-ncurses-view
@@ -232,6 +240,7 @@
     ((and (windows-term-setting-cur-mov-by-pos *windows-term-setting*)
           (windows-term-setting-pos-char-width *windows-term-setting*)
           (windows-term-setting-cur-char-width *windows-term-setting*))
+     ;; for ConEmu with custom function of cur-char-width
      (let ((pos-x 0)
            (pos-y y)
            (cur-x 0))
@@ -244,6 +253,7 @@
     ((and (windows-term-setting-cur-mov-by-pos  *windows-term-setting*)
           (windows-term-setting-disp-char-width *windows-term-setting*)
           (windows-term-setting-pos-char-width  *windows-term-setting*))
+     ;; for ConEmu without custom function of cur-char-width
      (mouse-get-disp-x view x y))
     (t x)))
 (defun mouse-move-to-cursor (window x y)
@@ -290,6 +300,7 @@
          (let ((o (first *dragging-window*)))
            (when (windowp o)
              (multiple-value-bind (x y w h) (mouse-get-window-rect o)
+               (declare (ignore x y))
                (setf (lem:current-window) o)
                (cond
                  ;; vertical dragging window
@@ -434,12 +445,13 @@
              :retry)
             ((= code resize-code)
              ;; for resizing display
-             (setf *resizing* t)
+             (setf (now-resizing) t)
              :resize)
             ((= code mouse-code)
              ;; for mouse
              (multiple-value-bind (bstate x y z id)
                  (charms/ll:getmouse)
+               (declare (ignore z id))
                (mouse-event-proc bstate x y)))
             ((= code abort-code)
              (setf esc-key nil)
@@ -494,7 +506,7 @@
                  (get-pos-x temp-view x y)
                  (get-pos-y temp-view x y)
                  (if toggle-flag "+" "-"))
-      (setf toggle-flag (if toggle-flag nil t)))))
+      (setf toggle-flag (not toggle-flag)))))
 
 ;; workaround for display update problem (incomplete)
 (defun force-refresh-display (width height)
@@ -515,8 +527,8 @@
 
 ;; for resizing display
 (defun resize-display ()
-  (when *resizing*
-    (setf *resizing* nil)
+  (when (now-resizing)
+    (setf (now-resizing) nil)
     ;; wait to get window size certainly
     (sleep 0.1)
     ;; check resize error
@@ -599,6 +611,7 @@
            (incf pos-x  (calc-pos-char-width  *windows-term-setting* code)))
     pos-x))
 (defun get-pos-y (view x y &key (modeline nil))
+  (declare (ignore x))
   (+ y (ncurses-view-y view) (if modeline (ncurses-view-height view) 0)))
 
 ;; for mintty
@@ -606,7 +619,7 @@
 (defun get-cur-x (view x y &key (modeline nil))
   (unless (and (not (windows-term-setting-cur-mov-by-pos *windows-term-setting*))
                (windows-term-setting-disp-char-width *windows-term-setting*)
-               (windows-term-setting-disp-char-width *windows-term-setting*)
+               (windows-term-setting-pos-char-width  *windows-term-setting*)
                (windows-term-setting-cur-char-width  *windows-term-setting*))
     (return-from get-cur-x (get-pos-x view x y :modeline modeline)))
   (let* ((start-x (ncurses-view-x view))
@@ -626,6 +639,7 @@
 ;; for mintty and ConEmu
 ;; adjust line width by using zero-width-space character (#\u200b)
 (defun adjust-line (view x y &key (modeline nil))
+  (declare (ignore x))
   (unless (and (windows-term-setting-disp-char-width *windows-term-setting*)
                (windows-term-setting-pos-char-width  *windows-term-setting*))
     (return-from adjust-line))
@@ -662,6 +676,7 @@
 
 ;; clip string to fit inside of view
 (defun clip-string (view x y string)
+  (declare (ignore y))
   (let ((disp-width (ncurses-view-width view)))
     (cond
       ((>= x disp-width)
